@@ -47,10 +47,19 @@ private:
     intptr_t victims;
 public:
     Condition():victims(0){}
+
     inline void add_victim(Coroutine* victim){
         victim->next = reinterpret_cast<Coroutine *>(victims);
         victims = reinterpret_cast<intptr_t>(victim);
     }
+	inline Coroutine* resume(){
+		Coroutine* coro = reinterpret_cast<Coroutine *>(victims);
+		if(nullptr == coro) return coro;
+
+		victims = reinterpret_cast<intptr_t>(coro->next);
+		coro->next = nullptr;
+		return coro;
+	}
 };
 
 
@@ -94,7 +103,6 @@ public:
     }
 
 };
-
 
 
 //<template F>
@@ -178,6 +186,35 @@ void coroutine_yeild(Schedule * sch){
     next_coro->running = 1;
 
     swapcontext( &(coro->ctx), &(next_coro->ctx) );
+}
+
+
+void coroutine_suspend(Schedule * sch){
+	Coroutine * next_coro = sch->_candidates.dequeue();
+	if( nullptr == next_coro) return;
+
+	Coroutine * coro = sch->_executant;
+	sch->_executant = next_coro;
+
+	coro->running = 0;
+	coro->suspended = 1;
+	next_coro->ready = 0;
+	next_coro->running = 1;
+
+    swapcontext( &(coro->ctx), &(next_coro->ctx) );
+}
+
+void coroutine_wait(Schedule * sch, Condition *cond){
+	Coroutine * coro = sch->_executant;
+	cond->add_victim(coro);	
+	coroutine_suspend(sch);
+}
+
+void coroutine_signal(Schedule *sch, Condition *cond){
+	Coroutine * coro = cond->resume();	
+	coro->suspended = 0;
+	coro->ready = 1;
+	sch->_candidates.enqueue(coro);
 }
 
 void tramp(void * arg){
